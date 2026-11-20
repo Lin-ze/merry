@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Merry Christmas</title>
+<style>
+  html,body{margin:0;height:100%;background:#06060a;overflow:hidden}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  const cv  = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+
+  const CFG = {
+    turns: 13,       // 螺旋圈数
+    nSpiral: 2600,   // 螺旋粒子数
+    nCone: 1600,     // 锥体散点
+    rot: 0.45,       // 旋转速度（弧度/秒）
+    squash: 0.22     // 透视压扁系数（越大越"俯视"）
+  };
+
+  let W, H, cx, baseY, treeH, treeR;
+  let spiral, cone, snow, stars, heart;
+  let rotBase = 0, last = 0;
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  function build() {
+    // 1. 螺旋：t 从 0(底) 到 1(顶)，半径线性收窄 → 圆锥
+    spiral = [];
+    for (let i = 0; i < CFG.nSpiral; i++) {
+      const t = Math.pow(i / CFG.nSpiral, 0.9);
+      spiral.push({
+        t,
+        th: t * CFG.turns * Math.PI * 2 + rnd(-0.05, 0.05),
+        r : 1 - t + rnd(-0.018, 0.018),
+        s : rnd(0.5, 1.5) * (1.1 - t * 0.35),
+        a : rnd(0.35, 1),
+        ph: rnd(0, 6.283),
+        hot: Math.random() < 0.10
+      });
+    }
+    // 2. 锥体散点：填充树身，让树看起来是"雾状"的
+    cone = [];
+    for (let i = 0; i < CFG.nCone; i++) {
+      const t = Math.pow(Math.random(), 0.75) * 0.98;
+      cone.push({
+        t,
+        th: rnd(0, 6.283),
+        r : 1 - t + rnd(-0.03, 0.03),
+        s : rnd(0.35, 1.1),
+        a : rnd(0.12, 0.50),
+        ph: rnd(0, 6.283),
+        hot: false
+      });
+    }
+    // 3. 顶上的爱心（心形参数方程撒点）
+    heart = [];
+    for (let i = 0; i < 320; i++) {
+      const u = rnd(0, 6.283), k = Math.sqrt(Math.random());
+      const hx = 16 * Math.pow(Math.sin(u), 3);
+      const hy = -(13*Math.cos(u) - 5*Math.cos(2*u) - 2*Math.cos(3*u) - Math.cos(4*u));
+      heart.push({ x: hx * k, y: hy * k, ph: rnd(0, 6.283), a: rnd(0.45, 1) });
+    }
+    // 4. 雪
+    snow = [];
+    const n = Math.round(W * H / 8000);
+    for (let i = 0; i < n; i++) {
+      snow.push({ x: rnd(0, W), y: rnd(0, H), r: rnd(0.4, 1.7),
+                  vy: rnd(10, 30), vx: rnd(-8, 8), a: rnd(0.15, 0.85), ph: rnd(0, 6.283) });
+    }
+    // 5. 背景星
+    stars = [];
+    for (let i = 0; i < 140; i++) {
+      stars.push({ x: rnd(0, W), y: rnd(0, H * 0.9), r: rnd(0.3, 1.1), ph: rnd(0, 6.283), sp: rnd(1, 3) });
+    }
+  }
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    cx    = W * 0.5;
+    treeH = Math.min(H * 0.60, W * 1.00);
+    treeR = treeH * 0.40;
+    baseY = H * 0.80;
+    build();
+  }
+
+  function draw(now) {
+    const dt = Math.min((now - last) / 1000 || 0, 0.05);
+    last = now;
+    rotBase += CFG.rot * dt;
+    const time = now / 1000;
+
+    // 半透明黑覆盖 = 拖影（这是"发光感"的关键）
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(6,6,10,0.45)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';   // 加色混合
+
+    // 背景星
+    for (const s of stars) {
+      const a = 0.25 + 0.55 * Math.abs(Math.sin(time * s.sp + s.ph));
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.283); ctx.fill();
+    }
+
+    // 地面光晕
+    const g = ctx.createRadialGradient(cx, baseY, 0, cx, baseY, treeR * 2.4);
+    g.addColorStop(0, 'rgba(255,120,165,0.12)');
+    g.addColorStop(1, 'rgba(255,120,165,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // 树的粒子
+    const paint = p => {
+      const ang = p.th + rotBase;
+      const R   = p.r * treeR;
+      const x   = cx + R * Math.sin(ang);
+      const y   = baseY - p.t * treeH + R * Math.cos(ang) * CFG.squash;
+      const depth = (Math.cos(ang) + 1) * 0.5;          // 0 后 → 1 前
+      const tw    = 0.55 + 0.45 * Math.sin(time * 2.2 + p.ph);
+      const alpha = p.a * tw * (0.30 + depth * 0.70);   // 前面的亮、后面的暗
+      if (alpha < 0.015) return;
+      const rgb = p.hot ? '255,228,238' : '255,158,190';
+      ctx.fillStyle = `rgba(${rgb},${alpha.toFixed(3)})`;
+      const s = p.s * (0.65 + depth * 0.85);
+      ctx.beginPath(); ctx.arc(x, y, s, 0, 6.283); ctx.fill();
+    };
+    for (const p of cone)   paint(p);
+    for (const p of spiral) paint(p);
+
+    // 顶部爱心
+    const hs = treeH * 0.0036;
+    const hy = baseY - treeH - treeR * 0.10;
+    for (const p of heart) {
+      const tw = 0.60 + 0.40 * Math.sin(time * 3 + p.ph);
+      ctx.fillStyle = `rgba(255,185,210,${(p.a * tw).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(cx + p.x * hs, hy + p.y * hs, Math.max(0.7, hs * 0.45), 0, 6.283);
+      ctx.fill();
+    }
+
+    // 雪花
+    for (const f of snow) {
+      f.y += f.vy * dt;
+      f.x += f.vx * dt + Math.sin(time + f.ph) * 0.2;
+      if (f.y > H + 5)      { f.y = -5; f.x = rnd(0, W); }
+      if (f.x < -5)         f.x = W + 5;
+      else if (f.x > W + 5) f.x = -5;
+      const a = f.a * (0.6 + 0.4 * Math.sin(time + f.ph));
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, 6.283);
+      ctx.fill();
+    }
+
+    // 文字（放在雪花循环外面）
+    const fs = Math.max(16, W * 0.030);
+    ctx.font = `italic ${fs}px "Segoe Script","Brush Script MT","Lucida Handwriting",cursive`;
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(255,140,180,0.9)';
+    ctx.shadowBlur  = fs * 0.6;
+    ctx.fillStyle   = 'rgba(255,238,242,0.92)';
+    ctx.fillText('Merry Christmas To 落落', W * 0.035, H * 0.30);
+    ctx.shadowBlur  = 0;
+  }
+
+  function loop(now) { draw(now); requestAnimationFrame(loop); }
+
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
